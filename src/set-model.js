@@ -1,4 +1,4 @@
-import { _validate, cast, checkAssertions, checkDefinition, extendDefinition, extendModel, formatDefinition, Model, stackError } from "./object-model.js"
+import { _validate, checkAssertions, checkDefinition, extendDefinition, extendModel, formatDefinition, Model, stackError } from "./object-model.js"
 import { initListModel } from "./list-model.js"
 import { extend, is, isIterable } from "./helpers.js"
 
@@ -7,12 +7,12 @@ export default function SetModel(initialDefinition) {
 		Set,
 		SetModel,
 		initialDefinition,
-		it => isIterable(it) ? new Set([...it].map(val => cast(val, model.definition))) : it,
+		it => isIterable(it) ? new Set([...it]) : it,
 		set => new Set(set),
 		{
-			"add": ([val]) => [cast(val, model.definition)],
-			"delete": 0,
-			"clear": 0
+			"add": [0,0],
+			"delete": [],
+			"clear": []
 		}
 	)
 
@@ -24,13 +24,18 @@ extend(SetModel, Model, {
 		return "Set of " + formatDefinition(this.definition, stack)
 	},
 
-	[_validate](set, path, errors, stack) {
+	[_validate](set, path, errors, stack, shouldCast) {
 		if (is(Set, set)) {
 			for (let item of set.values()) {
-				checkDefinition(item, this.definition, `${path || "Set"} value`, errors, stack)
+				let casted = checkDefinition(item, this.definition, `${path || "Set"} value`, errors, stack, shouldCast)
+				if(shouldCast && casted !== item){
+					set.delete(item)
+					set.add(casted)
+				}
 			}
 		} else stackError(errors, this, set, path)
 		checkAssertions(set, this, path, errors)
+		return set
 	},
 
 	extend(...newParts) {

@@ -1,29 +1,27 @@
 import {
-	_validate, cast, checkAssertions, checkDefinition, extendDefinition, extendModel,
+	_validate, checkAssertions, checkDefinition, extendDefinition, extendModel,
 	formatDefinition, Model, stackError, unstackErrors
 } from "./object-model.js"
 import { extend } from "./helpers.js"
 import { initListModel } from "./list-model.js";
 
 export default function ArrayModel(initialDefinition) {
-	let castAll = args => args.map(arg => cast(arg, model.definition))
-
 	let model = initListModel(
 		Array,
 		ArrayModel,
 		initialDefinition,
-		a => Array.isArray(a) ? castAll(a) : a,
+		a => a,
 		a => [...a],
 		{
-			"copyWithin": 0,
-			"fill": ([val, ...rest]) => [cast(val, model.definition), ...rest],
-			"pop": 0,
-			"push": castAll,
-			"reverse": 0,
-			"shift": 0,
-			"sort": 0,
-			"splice": ([start, end, ...vals]) => [start, end, ...castAll(vals)],
-			"unshift": castAll,
+			"copyWithin": [],
+			"fill": [0,0],
+			"pop": [],
+			"push": [0],
+			"reverse": [],
+			"shift": [],
+			"sort": [],
+			"splice": [2],
+			"unshift": [0]
 		},
 		{
 			set(arr, key, val) {
@@ -44,12 +42,13 @@ extend(ArrayModel, Model, {
 		return 'Array of ' + formatDefinition(this.definition, stack)
 	},
 
-	[_validate](arr, path, errors, stack) {
+	[_validate](arr, path, errors, stack, shouldCast) {
 		if (Array.isArray(arr))
-			arr.forEach((a, i) => checkDefinition(a, this.definition, `${path || "Array"}[${i}]`, errors, stack))
+			arr = arr.map((a, i) => checkDefinition(a, this.definition, `${path || "Array"}[${i}]`, errors, stack, shouldCast))
 		else stackError(errors, this, arr, path)
 
 		checkAssertions(arr, this, path, errors)
+		return arr
 	},
 
 	extend(...newParts) {

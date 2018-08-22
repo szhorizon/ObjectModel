@@ -76,23 +76,21 @@ export const
 		if (indexFound !== -1 && stack.indexOf(def, indexFound + 1) !== -1)
 			return obj //if found twice in call stack, cycle detected, skip validation
 
+		if (shouldCast) obj = cast(obj, def)
+
 		if (is(Model, def)) {
-			if (shouldCast) obj = cast(obj, def)
-			def[_validate](obj, path, errors, stack.concat(def))
+			obj = def[_validate](obj, path, errors, stack.concat(def))
 		}
 		else if (isPlainObject(def)) {
 			Object.keys(def).map(key => {
 				let val = obj ? obj[key] : undefined;
-				checkDefinition(val, def[key], formatPath(path, key), errors, stack, shouldCast)
+				let casted = checkDefinition(val, def[key], formatPath(path, key), errors, stack, shouldCast)
+				if(shouldCast && obj && casted !== undefined) obj[key] = casted
 			})
 		}
 		else {
 			let pdef = parseDefinition(def)
-			if (pdef.some(part => checkDefinitionPart(obj, part, path, stack))) {
-				if (shouldCast) obj = cast(obj, def)
-				return obj
-			}
-
+			if (pdef.some(part => checkDefinitionPart(obj, part, path, stack, shouldCast))) return obj
 			stackError(errors, def, obj, path)
 		}
 
@@ -168,7 +166,7 @@ export const
 		let isInDefinition = has(def, key);
 		if (isInDefinition || !model.sealed) {
 			applyMutation(newPath)
-			if (isInDefinition) checkDefinition(o[key], def[key], newPath, model.errors, [])
+			if (isInDefinition) o[key] = checkDefinition(o[key], def[key], newPath, model.errors, [], true)
 			checkAssertions(o, model, newPath)
 		}
 		else rejectUndeclaredProp(newPath, o[key], model.errors)
@@ -331,13 +329,8 @@ Object.assign(Model.prototype, {
 		return this
 	},
 
-	[_validate](obj, path, errors, stack) {
-		checkDefinition(obj, this.definition, path, errors, stack)
-		checkAssertions(obj, this, path, errors)
-	},
-
-	validate(obj, errorCollector, shouldCast) {
-		this[_validate](obj, null, this.errors, [], shouldCast)
+	validate(obj, errorCollector) {
+		this[_validate](obj, null, this.errors, [])
 		return !unstackErrors(this, errorCollector)
 	},
 
@@ -385,6 +378,11 @@ export function BasicModel(def) {
 }
 
 extend(BasicModel, Model, {
+	[_validate](obj, path, errors, stack) {
+		checkDefinition(obj, this.definition, path, errors, stack)
+		checkAssertions(obj, this, path, errors)
+	},
+
 	extend(...newParts) {
 		let child = extendModel(new BasicModel(extendDefinition(this.definition, newParts)), this)
 		for (let part of newParts) {
@@ -408,9 +406,12 @@ export function ObjectModel(def, params) {
 		if (model.parentClass) merge(obj, new model.parentClass(obj))
 		merge(this, obj)
 
-		if (mode === MODE_CAST || model.validate(this, undefined, true)) {
-			return getProxy(model, this, model.definition)
+		if (mode !== MODE_CAST){
+			model[_validate](this, null, model.errors, [], true)
+			unstackErrors(model)
 		}
+
+		return getProxy(model, this, model.definition)
 	}
 
 	Object.assign(model, params)
@@ -465,5 +466,6 @@ extend(ObjectModel, Model, {
 		else stackError(errors, this, obj, path)
 
 		checkAssertions(obj, this, path, errors)
+		return obj
 	}
 })

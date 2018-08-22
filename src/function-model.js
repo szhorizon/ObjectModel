@@ -68,6 +68,7 @@ extend(FunctionModel, Model, {
 
 	[_validate](f, path, errors) {
 		if (!isFunction(f)) stackError(errors, "Function", f, path)
+		return f
 	}
 })
 
