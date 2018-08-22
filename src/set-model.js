@@ -10,7 +10,7 @@ export default function SetModel(initialDefinition) {
 		it => isIterable(it) ? new Set([...it]) : it,
 		set => new Set(set),
 		{
-			"add": [0,0],
+			"add": [0, 0],
 			"delete": [],
 			"clear": []
 		}
@@ -28,7 +28,7 @@ extend(SetModel, Model, {
 		if (is(Set, set)) {
 			for (let item of set.values()) {
 				let casted = checkDefinition(item, this.definition, `${path || "Set"} value`, errors, stack, shouldCast)
-				if(shouldCast && casted !== item){
+				if (shouldCast && casted !== item) {
 					set.delete(item)
 					set.add(casted)
 				}

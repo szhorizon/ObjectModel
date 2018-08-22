@@ -14,7 +14,7 @@ export default function ArrayModel(initialDefinition) {
 		a => [...a],
 		{
 			"copyWithin": [],
-			"fill": [0,0],
+			"fill": [0, 0],
 			"pop": [],
 			"push": [0],
 			"reverse": [],

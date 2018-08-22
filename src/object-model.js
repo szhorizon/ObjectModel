@@ -85,7 +85,7 @@ export const
 			Object.keys(def).map(key => {
 				let val = obj ? obj[key] : undefined;
 				let casted = checkDefinition(val, def[key], formatPath(path, key), errors, stack, shouldCast)
-				if(shouldCast && obj && casted !== undefined) obj[key] = casted
+				if (shouldCast && obj && casted !== undefined) obj[key] = casted
 			})
 		}
 		else {
@@ -195,7 +195,7 @@ export const
 	},
 
 	cast = (obj, defNode = []) => {
-		if (!obj || isPlainObject(defNode) || is(BasicModel, defNode) || isModelInstance(obj))
+		if (obj == null || isPlainObject(defNode) || is(BasicModel, defNode) || isModelInstance(obj))
 			return obj // no value or not leaf or already a model instance
 
 		let def = parseDefinition(defNode),
@@ -381,6 +381,7 @@ extend(BasicModel, Model, {
 	[_validate](obj, path, errors, stack) {
 		checkDefinition(obj, this.definition, path, errors, stack)
 		checkAssertions(obj, this, path, errors)
+		return obj
 	},
 
 	extend(...newParts) {
@@ -406,7 +407,7 @@ export function ObjectModel(def, params) {
 		if (model.parentClass) merge(obj, new model.parentClass(obj))
 		merge(this, obj)
 
-		if (mode !== MODE_CAST){
+		if (mode !== MODE_CAST) {
 			model[_validate](this, null, model.errors, [], true)
 			unstackErrors(model)
 		}

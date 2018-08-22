@@ -128,23 +128,21 @@
 			if (indexFound !== -1 && stack.indexOf(def, indexFound + 1) !== -1)
 				return obj //if found twice in call stack, cycle detected, skip validation
 
+			if (shouldCast) obj = cast(obj, def);
+
 			if (is(Model, def)) {
-				if (shouldCast) obj = cast(obj, def);
-				def[_validate](obj, path, errors, stack.concat(def));
+				obj = def[_validate](obj, path, errors, stack.concat(def));
 			}
 			else if (isPlainObject(def)) {
 				Object.keys(def).map(key => {
 					let val = obj ? obj[key] : undefined;
-					checkDefinition(val, def[key], formatPath(path, key), errors, stack, shouldCast);
+					let casted = checkDefinition(val, def[key], formatPath(path, key), errors, stack, shouldCast);
+					if (shouldCast && obj && casted !== undefined) obj[key] = casted;
 				});
 			}
 			else {
 				let pdef = parseDefinition(def);
-				if (pdef.some(part => checkDefinitionPart(obj, part, path, stack))) {
-					if (shouldCast) obj = cast(obj, def);
-					return obj
-				}
-
+				if (pdef.some(part => checkDefinitionPart(obj, part, path, stack, shouldCast))) return obj
 				stackError(errors, def, obj, path);
 			}
 
@@ -220,7 +218,7 @@
 			let isInDefinition = has(def, key);
 			if (isInDefinition || !model.sealed) {
 				applyMutation(newPath);
-				if (isInDefinition) checkDefinition(o[key], def[key], newPath, model.errors, []);
+				if (isInDefinition) o[key] = checkDefinition(o[key], def[key], newPath, model.errors, [], true);
 				checkAssertions(o, model, newPath);
 			}
 			else rejectUndeclaredProp(newPath, o[key], model.errors);
@@ -249,7 +247,7 @@
 		},
 
 		cast = (obj, defNode = []) => {
-			if (!obj || isPlainObject(defNode) || is(BasicModel, defNode) || isModelInstance(obj))
+			if (obj == null || isPlainObject(defNode) || is(BasicModel, defNode) || isModelInstance(obj))
 				return obj // no value or not leaf or already a model instance
 
 			let def = parseDefinition(defNode),
@@ -383,13 +381,8 @@
 			return this
 		},
 
-		[_validate](obj, path, errors, stack) {
-			checkDefinition(obj, this.definition, path, errors, stack);
-			checkAssertions(obj, this, path, errors);
-		},
-
-		validate(obj, errorCollector, shouldCast) {
-			this[_validate](obj, null, this.errors, [], shouldCast);
+		validate(obj, errorCollector) {
+			this[_validate](obj, null, this.errors, []);
 			return !unstackErrors(this, errorCollector)
 		},
 
@@ -437,6 +430,12 @@
 	}
 
 	extend(BasicModel, Model, {
+		[_validate](obj, path, errors, stack) {
+			checkDefinition(obj, this.definition, path, errors, stack);
+			checkAssertions(obj, this, path, errors);
+			return obj
+		},
+
 		extend(...newParts) {
 			let child = extendModel(new BasicModel(extendDefinition(this.definition, newParts)), this);
 			for (let part of newParts) {
@@ -460,9 +459,12 @@
 			if (model.parentClass) merge(obj, new model.parentClass(obj));
 			merge(this, obj);
 
-			if (mode === MODE_CAST || model.validate(this, undefined, true)) {
-				return getProxy(model, this, model.definition)
+			if (mode !== MODE_CAST) {
+				model[_validate](this, null, model.errors, [], true);
+				unstackErrors(model);
 			}
+
+			return getProxy(model, this, model.definition)
 		};
 
 		Object.assign(model, params);
@@ -517,6 +519,7 @@
 			else stackError(errors, this, obj, path);
 
 			checkAssertions(obj, this, path, errors);
+			return obj
 		}
 	});
 
@@ -524,27 +527,38 @@
 
 		let model = function (list = model.default, mode) {
 			list = init(list);
+			if(mode !== MODE_CAST){
+				list = model[_validate](list, null, model.errors, [], true);
+				unstackErrors(model);
+			}
 
-			if (mode === MODE_CAST || model.validate(list)) {
-				return proxifyModel(list, model, Object.assign({
-					get(l, key) {
-						if (key === _original) return l
+			return proxifyModel(list, model, Object.assign({
+				get(l, key) {
+					if (key === _original) return l
 
-						let val = l[key];
-						return isFunction(val) ? proxifyFn(val, (fn, ctx, args) => {
-							if (has(mutators, key)) {
-								if (mutators[key]) args = mutators[key](args); // autocast method args
-
-								let testingClone = clone(l);
-								fn.apply(testingClone, args);
-								model.validate(testingClone);
+					let val = l[key];
+					return isFunction(val) ? proxifyFn(val, (fn, ctx, args) => {
+						if (has(mutators, key)) {
+							// indexes of arguments to check def + cast
+							let [begin, end = args.length-1, getArgDef] = mutators[key];
+							for (let i = begin; i <= end; i++) {
+								let argDef = getArgDef ? getArgDef(i) : model.definition;
+								args[i] = checkDefinition(args[i], argDef, `${base.name}.${key} arguments[${i}]`, model.errors, [],	true);
 							}
 
-							return fn.apply(l, args)
-						}) : val
-					}
-				}, otherTraps))
-			}
+							if(model.assertions.length > 0){
+								let testingClone = clone(l);
+								fn.apply(testingClone, args);
+								checkAssertions(testingClone, model, `after ${key} mutation`);
+							}
+
+							unstackErrors(model);
+						}
+
+						return fn.apply(l, args)
+					}) : val
+				}
+			}, otherTraps))
 		};
 
 		extend(model, base);
@@ -554,24 +568,22 @@
 	};
 
 	function ArrayModel(initialDefinition) {
-		let castAll = args => args.map(arg => cast(arg, model.definition));
-
 		let model = initListModel(
 			Array,
 			ArrayModel,
 			initialDefinition,
-			a => Array.isArray(a) ? castAll(a) : a,
+			a => a,
 			a => [...a],
 			{
-				"copyWithin": 0,
-				"fill": ([val, ...rest]) => [cast(val, model.definition), ...rest],
-				"pop": 0,
-				"push": castAll,
-				"reverse": 0,
-				"shift": 0,
-				"sort": 0,
-				"splice": ([start, end, ...vals]) => [start, end, ...castAll(vals)],
-				"unshift": castAll,
+				"copyWithin": [],
+				"fill": [0, 0],
+				"pop": [],
+				"push": [0],
+				"reverse": [],
+				"shift": [],
+				"sort": [],
+				"splice": [2],
+				"unshift": [0]
 			},
 			{
 				set(arr, key, val) {
@@ -592,12 +604,13 @@
 			return 'Array of ' + formatDefinition(this.definition, stack)
 		},
 
-		[_validate](arr, path, errors, stack) {
+		[_validate](arr, path, errors, stack, shouldCast) {
 			if (Array.isArray(arr))
-				arr.forEach((a, i) => checkDefinition(a, this.definition, `${path || "Array"}[${i}]`, errors, stack));
+				arr = arr.map((a, i) => checkDefinition(a, this.definition, `${path || "Array"}[${i}]`, errors, stack, shouldCast));
 			else stackError(errors, this, arr, path);
 
 			checkAssertions(arr, this, path, errors);
+			return arr
 		},
 
 		extend(...newParts) {
@@ -623,12 +636,12 @@
 			Set,
 			SetModel,
 			initialDefinition,
-			it => isIterable(it) ? new Set([...it].map(val => cast(val, model.definition))) : it,
+			it => isIterable(it) ? new Set([...it]) : it,
 			set => new Set(set),
 			{
-				"add": ([val]) => [cast(val, model.definition)],
-				"delete": 0,
-				"clear": 0
+				"add": [0, 0],
+				"delete": [],
+				"clear": []
 			}
 		);
 
@@ -640,13 +653,18 @@
 			return "Set of " + formatDefinition(this.definition, stack)
 		},
 
-		[_validate](set, path, errors, stack) {
+		[_validate](set, path, errors, stack, shouldCast) {
 			if (is(Set, set)) {
 				for (let item of set.values()) {
-					checkDefinition(item, this.definition, `${path || "Set"} value`, errors, stack);
+					let casted = checkDefinition(item, this.definition, `${path || "Set"} value`, errors, stack, shouldCast);
+					if (shouldCast && casted !== item) {
+						set.delete(item);
+						set.add(casted);
+					}
 				}
 			} else stackError(errors, this, set, path);
 			checkAssertions(set, this, path, errors);
+			return set
 		},
 
 		extend(...newParts) {
@@ -655,17 +673,16 @@
 	});
 
 	function MapModel(initialKeyDefinition, initialValueDefinition) {
-		let castKeyValue = ([k, v]) => [cast(k, model.definition.key), cast(v, model.definition.value)];
 		let model = initListModel(
 			Map,
 			MapModel,
 			{ key: initialKeyDefinition, value: initialValueDefinition },
-			it => isIterable(it) ? new Map([...it].map(castKeyValue)) : it,
+			(it = []) => isIterable(it) ? new Map(it) : it,
 			map => new Map(map),
 			{
-				"set": castKeyValue,
-				"delete": 0,
-				"clear": 0
+				"set": [0, 1, i => i === 0 ? model.definition.key : model.definition.value],
+				"delete": [],
+				"clear": []
 			}
 		);
 
@@ -678,16 +695,21 @@
 			return `Map of ${formatDefinition(key, stack)} : ${formatDefinition(value, stack)}`
 		},
 
-		[_validate](map, path, errors, stack) {
+		[_validate](map, path, errors, stack, shouldCast) {
 			if (is(Map, map)) {
 				path = path || 'Map';
-				for (let [key, value] of map) {
-					checkDefinition(key, this.definition.key, `${path} key`, errors, stack);
-					checkDefinition(value, this.definition.value, `${path}[${format(key)}]`, errors, stack);
+				for (let [key, val] of map) {
+					let ckey = checkDefinition(key, this.definition.key, `${path} key`, errors, stack, shouldCast);
+					let cval = checkDefinition(val, this.definition.value, `${path}[${format(key)}]`, errors, stack, shouldCast);
+					if (shouldCast && (ckey !== key || cval !== val)) {
+						if (ckey !== key) map.delete(key);
+						map.set(ckey, cval);
+					}
 				}
 			} else stackError(errors, this, map, path);
 
 			checkAssertions(map, this, path, errors);
+			return map
 		},
 
 		extend(keyParts, valueParts) {
@@ -762,6 +784,7 @@
 
 		[_validate](f, path, errors) {
 			if (!isFunction(f)) stackError(errors, "Function", f, path);
+			return f
 		}
 	});
 

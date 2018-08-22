@@ -10,7 +10,7 @@ export default function MapModel(initialKeyDefinition, initialValueDefinition) {
 		Map,
 		MapModel,
 		{ key: initialKeyDefinition, value: initialValueDefinition },
-		it => isIterable(it) ? new Map(it) : it,
+		(it = []) => isIterable(it) ? new Map(it) : it,
 		map => new Map(map),
 		{
 			"set": [0, 1, i => i === 0 ? model.definition.key : model.definition.value],
@@ -34,8 +34,8 @@ extend(MapModel, Model, {
 			for (let [key, val] of map) {
 				let ckey = checkDefinition(key, this.definition.key, `${path} key`, errors, stack, shouldCast)
 				let cval = checkDefinition(val, this.definition.value, `${path}[${format(key)}]`, errors, stack, shouldCast)
-				if(shouldCast && (ckey !== key || cval !== val)){
-					if(ckey !== key) map.delete(key)
+				if (shouldCast && (ckey !== key || cval !== val)) {
+					if (ckey !== key) map.delete(key)
 					map.set(ckey, cval)
 				}
 			}
